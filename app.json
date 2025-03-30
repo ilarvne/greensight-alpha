@@ -19,7 +19,8 @@
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
-      }
+      },
+      "package": "com.nurali27.greensight"
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -27,10 +28,10 @@
     "extra": {
       "supabaseUrl": "https://xjwsmpasheoqlyjyuswv.supabase.co",
       "supabaseAnonKey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inhqd3NtcGFzaGVvcWx5anl1c3d2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDMyNjI3NjMsImV4cCI6MjA1ODgzODc2M30.SRY6IVuFUyalyjeuoHSLl8F1biKKtfKkIomuqUIpfDY",
-      
       "eas": {
         "projectId": "f8fc7c3b-e55c-45b6-8f17-409197377039"
-      }
+      },
+      "useMockSensorData": true
     },
     "owner": "nurali27"
   }
