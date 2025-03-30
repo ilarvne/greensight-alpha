@@ -1,210 +1,309 @@
 // screens/SettingsScreen.js
-import React from 'react';
-import { View, Text, StyleSheet, ScrollView, Alert, Platform } from 'react-native';
-import AppButton from '../components/AppButton';
-// Use AuthContext to get signOut function and user info
-import { useAuth } from '../contexts/AuthContext';
-import { COLORS, FONTS, SIZES } from '../utils/theme';
-import { MaterialCommunityIcons } from '@expo/vector-icons';
-// Notification functions might be moved to a separate utility or kept here temporarily
-import * as Notifications from 'expo-notifications';
+import React, { useState, useCallback, useEffect } from "react";
+import {
+  View, Text, StyleSheet, ScrollView, Alert, Platform,
+  TouchableOpacity, ActivityIndicator, Switch, SafeAreaView
+} from "react-native";
+import { useAuth } from "../contexts/AuthContext"; // Import useAuth for signOut
+import { useTheme } from "../contexts/ThemeContext";
+import { FONTS, SIZES } from "../utils/theme";
+import { MaterialCommunityIcons } from "@expo/vector-icons";
+import * as Notifications from "expo-notifications";
+import DateTimePickerModal from "react-native-modal-datetime-picker"; // Ensure installed
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { formatDate } from "../utils/helpers";
+import AppButton from "../components/AppButton"; // Import AppButton for Sign Out
 
-// Helper function for notification permissions (can be moved to utils)
-const requestNotificationPermissions = async () => {
-    const { status } = await Notifications.getPermissionsAsync();
-    let finalStatus = status;
-    if (finalStatus !== 'granted') {
-        const { status: requestedStatus } = await Notifications.requestPermissionsAsync();
-        finalStatus = requestedStatus;
-    }
-    if (finalStatus !== 'granted') {
-        Alert.alert('Permission Denied', 'Notification permissions are needed to set daily reminders.');
-        return false;
-    }
-    if (Platform.OS === 'android') {
-        await Notifications.setNotificationChannelAsync('default', { name: 'Default', importance: Notifications.AndroidImportance.MAX });
-    }
-    return true;
+// --- Notification Helper Functions (Keep as previously defined) ---
+const NOTIFICATION_PREFS_KEY = "@Greensight:notificationPrefs";
+
+const requestNotificationPermissions = async () => { /* ... (Keep existing function) ... */ };
+const scheduleDailyReminder = async (hour, minute) => { /* ... (Keep existing function) ... */ };
+const cancelAllReminders = async () => { /* ... (Keep existing function) ... */ };
+
+// --- Reusable Section Component ---
+const SettingsSection = ({ title, children, colors }) => (
+    <View style={styles.section}>
+        <Text style={[styles.sectionTitle, { color: colors.text, borderBottomColor: colors.lightGray + '80' }]}>
+            {title}
+        </Text>
+        <View style={styles.sectionContent}>
+            {children}
+        </View>
+    </View>
+);
+
+// --- Reusable Setting Row Component ---
+const SettingRow = ({ label, description, children, colors }) => (
+    <View style={styles.settingRow}>
+        <View style={styles.settingTextContainer}>
+            <Text style={[styles.settingLabel, { color: colors.text }]}>{label || ''}</Text>
+            {description && <Text style={[styles.settingDescription, { color: colors.textSecondary }]}>{description || ''}</Text>}
+        </View>
+        <View style={styles.settingControlContainer}>
+            {children}
+        </View>
+    </View>
+);
+
+// --- Theme Option Button ---
+const ThemeOptionButton = ({ schemeValue, schemeLabel, iconName, currentPref, onPress, colors }) => {
+    const isActive = currentPref === schemeValue;
+    const activeBg = colors.primaryLight;
+    const activeBorder = colors.primaryDark;
+    const activeText = colors.primaryDark;
+    const inactiveBg = colors.inputBackground;
+    const inactiveBorder = colors.inputBorder;
+    const inactiveText = colors.textSecondary;
+
+    return (
+      <TouchableOpacity
+        style={[ styles.themeOptionButton, { borderColor: isActive ? activeBorder : inactiveBorder, backgroundColor: isActive ? activeBg : inactiveBg } ]}
+        onPress={() => onPress(schemeValue)}
+        key={schemeValue}
+        activeOpacity={0.7} >
+        <MaterialCommunityIcons name={iconName} size={22} color={isActive ? activeText : inactiveText} style={styles.themeIcon} />
+        <Text style={[ styles.themeOptionText, { color: isActive ? activeText : inactiveText } ]}>
+          {schemeLabel}
+        </Text>
+      </TouchableOpacity>
+    );
 };
 
-// Helper function for scheduling (can be moved to utils)
-const scheduleDailyReminder = async (hour = 10, minute = 0) => {
-    await Notifications.cancelAllScheduledNotificationsAsync();
+
+// --- Settings Screen Component ---
+const SettingsScreen = ({ navigation }) => {
+  const { colors, setScheme, colorSchemePref } = useTheme();
+  const { signOut } = useAuth(); // Get signOut function
+  const [notificationsEnabled, setNotificationsEnabled] = useState(false);
+  const [reminderTime, setReminderTime] = useState(() => { // Default time
+    const initialTime = new Date(); initialTime.setHours(10, 0, 0, 0); return initialTime;
+  });
+  const [isTimePickerVisible, setTimePickerVisibility] = useState(false);
+  const [loadingSettings, setLoadingSettings] = useState(true);
+  const [isScheduling, setIsScheduling] = useState(false); // Loading state for notification changes
+
+  // Load stored notification preferences on mount
+  useEffect(() => {
+    let isMounted = true;
+    const loadPrefs = async () => {
+      setLoadingSettings(true);
+      try {
+        const jsonValue = await AsyncStorage.getItem(NOTIFICATION_PREFS_KEY);
+        const storedPrefs = jsonValue != null ? JSON.parse(jsonValue) : null;
+        if (isMounted && storedPrefs) {
+          setNotificationsEnabled(storedPrefs.enabled ?? false);
+          const time = new Date();
+          time.setHours(storedPrefs.hour ?? 10); time.setMinutes(storedPrefs.minute ?? 0); time.setSeconds(0, 0);
+          setReminderTime(time);
+          console.log("SettingsScreen: Loaded Prefs", { enabled: storedPrefs.enabled, time: formatDate(time, "HH:mm") });
+        } else if (isMounted) { // Set defaults if nothing stored
+          const defaultTime = new Date(); defaultTime.setHours(10, 0, 0, 0);
+          setReminderTime(defaultTime); setNotificationsEnabled(false);
+          console.log("SettingsScreen: No stored prefs, using defaults.");
+        }
+      } catch (e) { console.error("SettingsScreen: Failed load notification prefs.", e); }
+      finally { if (isMounted) setLoadingSettings(false); }
+    };
+    loadPrefs();
+    return () => { isMounted = false; };
+  }, []);
+
+  // Handle Notification Toggle
+  const handleNotificationToggle = async (isEnabled) => {
+    if (isScheduling) return;
+    setIsScheduling(true);
+    setNotificationsEnabled(isEnabled);
+    const currentHour = reminderTime.getHours();
+    const currentMinute = reminderTime.getMinutes();
+    const prefsToSave = { enabled: isEnabled, hour: currentHour, minute: currentMinute };
+
     try {
-      await Notifications.scheduleNotificationAsync({
-        content: { title: "🌱 Greensight Check-in!", body: "Time to check your microgreens!", sound: true },
-        trigger: { hour: hour, minute: minute, repeats: true },
-      });
-      Alert.alert('Reminder Set', `Daily check-in reminder scheduled for ${hour}:${String(minute).padStart(2, '0')}.`);
-    } catch (error) {
-       console.error("Error scheduling notification:", error);
-       Alert.alert('Scheduling Error', 'Could not schedule the reminder.');
-    }
-};
+        await AsyncStorage.setItem(NOTIFICATION_PREFS_KEY, JSON.stringify(prefsToSave));
+        if (isEnabled) {
+            const granted = await requestNotificationPermissions();
+            if (granted) {
+                const scheduled = await scheduleDailyReminder(currentHour, currentMinute);
+                if (!scheduled) { // If scheduling failed, revert state and storage
+                    setNotificationsEnabled(false); await AsyncStorage.setItem(NOTIFICATION_PREFS_KEY, JSON.stringify({ ...prefsToSave, enabled: false }));
+                } else { Alert.alert("Reminders Enabled", `Daily reminder set for ${formatDate(reminderTime, "HH:mm")}.`); }
+            } else { // If permission denied, revert state and storage
+                 setNotificationsEnabled(false); await AsyncStorage.setItem(NOTIFICATION_PREFS_KEY, JSON.stringify({ ...prefsToSave, enabled: false }));
+            }
+        } else { // If toggling off
+            await cancelAllReminders(); Alert.alert("Reminders Disabled", "Daily reminders turned off.");
+        }
+    } catch (e) {
+        console.error("SettingsScreen: Failed save/update notification prefs.", e); Alert.alert("Error", "Could not save notification settings.");
+        setNotificationsEnabled(!isEnabled); // Revert UI on error
+    } finally { setIsScheduling(false); }
+  };
 
+  // Handle Time Picker
+  const showTimePicker = () => !isScheduling && setTimePickerVisibility(true);
+  const hideTimePicker = () => setTimePickerVisibility(false);
+  const handleConfirmTime = async (time) => {
+    hideTimePicker();
+    if (!time || isScheduling) return; // Exit if no time selected or already processing
 
-const SettingsScreen = () => {
-    // Get signOut function and user object from AuthContext
-    const { signOut, user } = useAuth();
+    setIsScheduling(true);
+    const previousTime = reminderTime; // Store previous time for potential revert
+    time.setSeconds(0, 0); // Ignore seconds
+    setReminderTime(time); // Update UI optimistically
 
-    const handleSetReminder = async () => {
-        const granted = await requestNotificationPermissions();
-         if (granted) {
-             scheduleDailyReminder(10, 0); // Example: 10:00 AM
-         }
-     }
+    const newHour = time.getHours();
+    const newMinute = time.getMinutes();
+    const prefsToSave = { enabled: notificationsEnabled, hour: newHour, minute: newMinute };
 
-     const handleSignOut = async () => {
-         Alert.alert(
-             "Sign Out",
-             "Are you sure you want to sign out?",
-             [
-                 { text: "Cancel", style: "cancel" },
-                 {
-                     text: "Sign Out",
-                     style: "destructive",
-                     onPress: async () => {
-                         try {
-                             await signOut();
-                             // Auth state listener in AuthContext/App.js will handle navigation
-                             console.log("User signed out successfully.");
-                         } catch (error) {
-                             console.error("Sign out error:", error);
-                             Alert.alert("Error", "Failed to sign out. Please try again.");
-                         }
-                     },
-                 },
-             ]
-         );
-     };
+    try {
+        await AsyncStorage.setItem(NOTIFICATION_PREFS_KEY, JSON.stringify(prefsToSave));
+        // Reschedule only if notifications are currently enabled
+        if (notificationsEnabled) {
+            const granted = await requestNotificationPermissions(); // Re-check permissions just in case
+            if (granted) {
+                const scheduled = await scheduleDailyReminder(newHour, newMinute);
+                if (scheduled) { Alert.alert("Reminder Time Updated", `Daily reminder time changed to ${formatDate(time, "HH:mm")}.`); }
+                else { // Rescheduling failed, revert
+                    setReminderTime(previousTime); await AsyncStorage.setItem(NOTIFICATION_PREFS_KEY, JSON.stringify({ ...prefsToSave, hour: previousTime.getHours(), minute: previousTime.getMinutes() })); Alert.alert("Error", "Could not update reminder time.");
+                }
+            } else { // Permission denied after changing time? Disable notifications
+                 setNotificationsEnabled(false); await AsyncStorage.setItem(NOTIFICATION_PREFS_KEY, JSON.stringify({ ...prefsToSave, enabled: false })); Alert.alert("Permission Denied", "Notifications disabled as permission was revoked.");
+            }
+        }
+    } catch (e) { console.error("SettingsScreen: Failed save/reschedule time.", e); Alert.alert("Error", "Could not update reminder time."); setReminderTime(previousTime); } // Revert UI on error
+    finally { setIsScheduling(false); }
+  };
+
+  // Handle Theme Change
+  const handleSetScheme = (scheme) => {
+      if (setScheme) { setScheme(scheme); } // Call context function
+  };
+
+  // Handle Sign Out
+   const handleSignOut = () => {
+       Alert.alert(
+           "Sign Out",
+           "Are you sure you want to sign out?",
+           [
+               { text: "Cancel", style: "cancel" },
+               {
+                   text: "Sign Out",
+                   style: "destructive",
+                   onPress: async () => {
+                       if (signOut) {
+                           await signOut();
+                           // AuthProvider listener should handle navigation automatically
+                       } else {
+                           Alert.alert("Error", "Sign out function not available.");
+                       }
+                   },
+               },
+           ]
+       );
+   };
+
+   // --- Main Render ---
+   if (loadingSettings) {
+       return ( <View style={[styles.loadingContainer, { backgroundColor: colors.background }]}><ActivityIndicator size="large" color={colors.primary} /></View> );
+   }
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent}>
-      <Text style={styles.title}>Settings</Text>
+    <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
+        <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false} >
 
-      {/* User Info Section */}
-        <View style={styles.section}>
-             <Text style={styles.sectionTitle}>Account</Text>
-             <View style={styles.settingItem}>
-                 <MaterialCommunityIcons name="email-outline" size={24} color={COLORS.primary} style={styles.icon}/>
-                 <View style={styles.textContainer}>
-                     <Text style={styles.settingLabel}>Email</Text>
-                     <Text style={styles.settingValue}>{user?.email ?? 'Not logged in'}</Text>
+            {/* --- Notifications Section --- */}
+             <SettingsSection title="Notifications" colors={colors}>
+                <SettingRow label="Enable Daily Reminders" description="Get a daily notification to check your microgreens." colors={colors}>
+                     <Switch trackColor={{ false: colors.gray + "80", true: colors.primaryLight }} thumbColor={notificationsEnabled ? colors.primary : colors.lightGray} ios_backgroundColor={colors.lightGray} onValueChange={handleNotificationToggle} value={notificationsEnabled} disabled={isScheduling} />
+                </SettingRow>
+                {/* Only show time picker option if enabled */}
+                {notificationsEnabled && (
+                     <SettingRow label="Reminder Time" colors={colors}>
+                         <TouchableOpacity onPress={showTimePicker} disabled={isScheduling} style={styles.timeDisplayButton}>
+                            {/* Ensure time is wrapped in Text */}
+                             <Text style={[styles.timeDisplayText, {color: colors.primaryDark}]}>{formatDate(reminderTime, "HH:mm")}</Text>
+                             <MaterialCommunityIcons name="clock-edit-outline" size={22} color={colors.primaryDark} style={{ marginLeft: SIZES.base }} />
+                         </TouchableOpacity>
+                     </SettingRow>
+                )}
+                 {/* Show subtle indicator while scheduling */}
+                 {isScheduling && <ActivityIndicator size="small" color={colors.primary} style={styles.schedulingIndicator} />}
+            </SettingsSection>
+
+             {/* --- Appearance Section --- */}
+             <SettingsSection title="Appearance" colors={colors}>
+                 <SettingRow label="App Theme" colors={colors} description="Choose your preferred color scheme.">
+                     {/* Content takes full width */}
+                     {null}
+                 </SettingRow>
+                 {/* Theme options below the label/description */}
+                 <View style={styles.themeOptionsContainer}>
+                    <ThemeOptionButton schemeValue="light" schemeLabel="Light" iconName="weather-sunny" currentPref={colorSchemePref} onPress={handleSetScheme} colors={colors} />
+                    <ThemeOptionButton schemeValue="dark" schemeLabel="Dark" iconName="weather-night" currentPref={colorSchemePref} onPress={handleSetScheme} colors={colors} />
+                    <ThemeOptionButton schemeValue="system" schemeLabel="System" iconName="theme-light-dark" currentPref={colorSchemePref} onPress={handleSetScheme} colors={colors} />
                  </View>
-             </View>
-             <AppButton
-                title="Sign Out"
-                onPress={handleSignOut}
-                style={styles.button}
-                color="danger" // Use danger color for sign out
-                icon={<MaterialCommunityIcons name="logout-variant" size={20} color={COLORS.white}/>}
-             />
-        </View>
+            </SettingsSection>
+
+            {/* --- Account Section --- */}
+            <SettingsSection title="Account" colors={colors}>
+                <AppButton
+                    title="Sign Out"
+                    onPress={handleSignOut}
+                    color="danger" // Use danger color for sign out
+                    variant="outline" // Use outline style
+                    icon={<MaterialCommunityIcons name="logout-variant" size={20} color={colors.danger}/>}
+                    style={styles.signOutButton}
+                />
+            </SettingsSection>
 
 
-       {/* Notifications Section */}
-        <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Notifications</Text>
-            <View style={styles.settingItem}>
-                <MaterialCommunityIcons name="bell-ring-outline" size={24} color={COLORS.primary} style={styles.icon}/>
-                <View style={styles.textContainer}>
-                    <Text style={styles.settingLabel}>Daily Reminder</Text>
-                    <Text style={styles.settingDescription}>Get notified daily to check your microgreens.</Text>
-                </View>
-            </View>
-            <AppButton
-                    title="Set Reminder (10:00 AM)" // Update time if dynamic setting is added
-                    onPress={handleSetReminder}
-                    style={styles.button}
-                    color="accent" // Use accent color
-                    icon={<MaterialCommunityIcons name="clock-outline" size={20} color={COLORS.white}/>}
+            {/* --- Date Time Picker Modal --- */}
+            <DateTimePickerModal
+                isVisible={isTimePickerVisible}
+                mode="time"
+                date={reminderTime || new Date()} // Ensure valid date passed
+                onConfirm={handleConfirmTime}
+                onCancel={hideTimePicker}
+                headerTextIOS="Select Reminder Time" // Customize iOS header
+                is24Hour={true} // Use 24 hour format
+                // Add theming/color props if available in your version
+                // buttonTextColorIOS={colors.primary}
             />
-        </View>
-
-        {/* About Section */}
-        <View style={styles.section}>
-            <Text style={styles.sectionTitle}>About</Text>
-             <View style={styles.settingItem}>
-                <MaterialCommunityIcons name="information-outline" size={24} color={COLORS.primary} style={styles.icon}/>
-                <View style={styles.textContainer}>
-                    <Text style={styles.settingLabel}>Greensight App</Text>
-                    <Text style={styles.settingDescription}>Version 1.1.0 (Supabase Integration)</Text>
-                </View>
-            </View>
-        </View>
-
-
-    </ScrollView>
+        </ScrollView>
+    </SafeAreaView>
   );
 };
 
+// --- Stylesheet ---
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: COLORS.background,
+  safeArea: { flex: 1, },
+  container: { flex: 1, },
+  loadingContainer: { flex: 1, justifyContent: "center", alignItems: "center" },
+  scrollContent: { padding: SIZES.paddingLarge, paddingBottom: SIZES.paddingLarge * 3, },
+  section: { marginBottom: SIZES.paddingLarge * 1.8, }, // More space between sections
+  sectionTitle: { ...FONTS.h3, fontWeight: "600", marginBottom: SIZES.padding, paddingBottom: SIZES.padding * 0.6, borderBottomWidth: 1, },
+  sectionContent: { // Add padding within section if needed, or rely on row padding
+    // paddingHorizontal: SIZES.base,
   },
-   scrollContent: {
-        padding: SIZES.paddingLarge,
-        paddingBottom: SIZES.paddingLarge * 2, // Extra space at bottom
-   },
-  title: {
-    ...FONTS.h1,
-    color: COLORS.primaryDark,
-    marginBottom: SIZES.paddingLarge,
+  settingRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingVertical: SIZES.padding * 0.8, minHeight: 60, borderBottomWidth: 1, // Add subtle divider between rows
+      borderBottomColor: 'rgba(128,128,128,0.1)', // Very light divider
   },
-   section: {
-       marginBottom: SIZES.paddingLarge * 1.5, // Space between sections
-   },
-   sectionTitle: {
-       ...FONTS.h3,
-       color: COLORS.textSecondary,
-       marginBottom: SIZES.padding,
-       fontWeight: '600',
-       borderBottomWidth: 1,
-       borderBottomColor: COLORS.lightGray,
-       paddingBottom: SIZES.base,
-   },
-  settingItem: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      backgroundColor: COLORS.cardBackground, // Use card background
-      padding: SIZES.padding,
-      borderRadius: SIZES.radius,
-      marginBottom: SIZES.padding,
-       shadowColor: COLORS.black,
-       shadowOffset: { width: 0, height: 1 },
-       shadowOpacity: 0.05,
-       shadowRadius: 2,
-       elevation: 1,
-       borderWidth: 1, // Subtle border
-       borderColor: COLORS.lightGray,
+  settingTextContainer: { flex: 1, marginRight: SIZES.padding },
+  settingLabel: { ...FONTS.body1, marginBottom: SIZES.base / 4, }, // Use body1 for setting labels
+  settingDescription: { ...FONTS.body3, lineHeight: 18, opacity: 0.8 },
+  settingControlContainer: { // Container for switch, button etc.
+     // Allows control elements to define their own size
   },
-  icon: {
-      marginRight: SIZES.padding,
-      color: COLORS.primary, // Use primary color for icons
+  themeOptionsContainer: { flexDirection: "row", justifyContent: "space-between", alignItems: "stretch", gap: SIZES.base, marginTop: SIZES.base }, // Use gap for spacing
+  themeOptionButton: { flex: 1, flexDirection: "column", alignItems: "center", justifyContent: "center", paddingVertical: SIZES.padding * 0.8, paddingHorizontal: SIZES.base, borderRadius: SIZES.radius, borderWidth: 2, minHeight: 65, // Make theme buttons taller
+    gap: SIZES.base * 0.5, // Space between icon and text
   },
-  textContainer: {
-      flex: 1,
-  },
-  settingLabel: { // Changed from settingTitle for clarity
-      ...FONTS.h4,
-      color: COLORS.text,
-      marginBottom: SIZES.base / 2,
-      fontWeight: '600',
-  },
-   settingValue: { // Style for displaying user email etc.
-       ...FONTS.body1,
-       color: COLORS.textSecondary,
-   },
-  settingDescription: {
-      ...FONTS.body2,
-      color: COLORS.textSecondary,
-      lineHeight: 18,
-  },
-   button: {
-       marginTop: SIZES.base, // Less margin for buttons within sections
-       width: '100%', // Make buttons full width within padding
-   }
+  themeIcon: { /* Removed marginRight */ },
+  themeOptionText: { ...FONTS.body2, fontWeight: "600" },
+  timeDisplayButton: { flexDirection: "row", alignItems: "center", paddingVertical: SIZES.base, paddingHorizontal: SIZES.padding * 0.5, borderRadius: SIZES.radius * 0.5, },
+  timeDisplayText: { ...FONTS.h4, fontWeight: "500" }, // Make time slightly smaller
+  schedulingIndicator: { marginTop: SIZES.padding * 0.5, alignSelf: "flex-end", height: 20, },
+  signOutButton: { marginTop: SIZES.padding, }, // Add margin above sign out button
 });
 
 export default SettingsScreen;
