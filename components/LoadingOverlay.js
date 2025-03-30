@@ -1,51 +1,58 @@
 // components/LoadingOverlay.js
 import React from 'react';
-import { View, ActivityIndicator, StyleSheet, Modal, Text } from 'react-native';
-import { COLORS, FONTS, SIZES } from '../utils/theme'; // Ensure SIZES is imported
+import { View, ActivityIndicator, StyleSheet, Modal, Text, Platform } from 'react-native';
+import { FONTS, SIZES } from '../utils/theme'; // Use FONTS/SIZES
+import { useTheme } from '../contexts/ThemeContext'; // Use theme colors
 
 const LoadingOverlay = ({ visible, text = "Loading..." }) => {
+  const { colors } = useTheme(); // Get theme colors
+
   return (
     <Modal
       transparent={true}
-      animationType="fade"
+      animationType="fade" // Subtle fade animation
       visible={visible}
-      onRequestClose={() => {}} // Prevent closing by back button on Android
+      onRequestClose={() => {}} // Prevent closing via back button/swipe
     >
+      {/* Semi-transparent background overlay */}
       <View style={styles.overlay}>
-        {/* Optional: Add a semi-transparent background card for better visibility */}
-        <View style={styles.container}>
-          <ActivityIndicator size="large" color={COLORS.primary} />
-          {text && <Text style={styles.text}>{text}</Text>}
+        {/* Container for the spinner and text, using themed background */}
+        <View style={[styles.container, { backgroundColor: colors.cardBackground }]}>
+          <ActivityIndicator size="large" color={colors.primary} />
+          {/* Conditionally render text if provided */}
+          {text && <Text style={[styles.text, { color: colors.textSecondary }]}>{text}</Text>}
         </View>
       </View>
     </Modal>
   );
 };
 
+// Stylesheet using SIZES and FONTS
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.4)', // Slightly darker overlay
+    backgroundColor: 'rgba(0, 0, 0, 0.5)', // Semi-transparent dark overlay
     justifyContent: 'center',
     alignItems: 'center',
   },
   container: {
-    backgroundColor: COLORS.cardBackground, // Use theme card background
-    padding: SIZES.paddingLarge, // Generous padding
-    borderRadius: SIZES.radius, // Use theme radius
+    padding: SIZES.paddingLarge, // Use large padding
+    borderRadius: SIZES.radius, // Consistent rounding
     alignItems: 'center',
-    shadowColor: COLORS.black,
+    // Add subtle shadow/elevation
+    shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.15,
     shadowRadius: 5,
     elevation: 5,
-    minWidth: 150, // Give it some minimum width
+    minWidth: 150, // Ensure container isn't too small
+    // Background color applied inline using theme
   },
   text: {
-    ...FONTS.body1, // Use theme font
+    ...FONTS.body1, // Use body1 font style
     marginTop: SIZES.padding, // Space between spinner and text
-    color: COLORS.textSecondary, // Use theme text color
     textAlign: 'center',
+    // Color applied inline using theme
   },
 });
 
